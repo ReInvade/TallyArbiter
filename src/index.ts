@@ -982,7 +982,7 @@ function TSLClients_UpdateAll() {
 }
 
 function getDeviceStates(deviceId?: string): DeviceState[] {
-	return devices.filter((d) => deviceId ? d.id == deviceId : true).flatMap((d) => currentConfig.bus_options.map((b) => {
+	let deviceStateObj = devices.filter((d) => deviceId ? d.id == deviceId : true).flatMap((d) => currentConfig.bus_options.map((b) => {
 		const deviceSources = device_sources.filter((s) => s.deviceId == d.id);
 		return {
 			busId: b.id,
@@ -993,6 +993,11 @@ function getDeviceStates(deviceId?: string): DeviceState[] {
 					.findIndex(([address, busses]: [string, string[]]) => busses.includes(b.type)) !== -1).map((s) => s.id),
 		}
 	}));
+
+	//console.log('*** device state obj ***')
+	//console.log(deviceStateObj)
+
+	return deviceStateObj;
 }
 
 function getSourceTypeDataFields(): SourceTypeDataFields[] {
@@ -1155,6 +1160,7 @@ function UpdateDeviceState(deviceId: string) {
 			}
 		}
 	}
+
 	UpdateSockets("device_states");
 	UpdateListenerClients(deviceId);
 	vMixEmulator?.updateListenerClients(currentDeviceTallyData);
@@ -1206,7 +1212,7 @@ function loadConfig() { // loads the JSON data from the config file to memory
 
 		device_actions = currentConfig.device_actions;
 		logger('Tally Arbiter Device Actions loaded.', 'info');
-		logger(`${device_actions.length} Device Sources configured.`, 'info');
+		logger(`${device_actions.length} Device Actions configured.`, 'info');
 
 		if (currentConfig.tsl_clients_1secupdate) {
 			currentConfig.tsl_clients_1secupdate = true;
@@ -1291,6 +1297,9 @@ function initializeSource(source: Source): TallyInput {
 		});
 	});
 	sourceClient.on("renameAddress", (address: string, newAddress: string) => {
+		//only do if they are different
+		if (address === newAddress) return;
+		
 		for (const deviceSource of device_sources.filter((d) => d.rename && d.sourceId == source.id && d.address == address)) {
 			deviceSource.address = newAddress;
 		}
@@ -1308,7 +1317,7 @@ function processSourceTallyData(sourceId: string, tallyData: SourceTallyData)
 	for (const [address, busses] of Object.entries(tallyData)) {
 		io.to('settings').emit('tally_data', sourceId, address, busses);
 	}
-	
+
 	currentSourceTallyData = {
 		...currentSourceTallyData,
 		...tallyData,

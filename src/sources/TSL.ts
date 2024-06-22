@@ -32,8 +32,7 @@ export class TSL3UDPSource extends TallyInput {
                 busses.push("program");
             }
             this.setBussesForAddress(tally.address, busses);
-            
-            this.sendTallyData();
+			this.sendIndividualTallyData(tally.address, busses);
         });
 
         this.connected.next(true);
@@ -113,7 +112,8 @@ export class TSL3TCPSource extends TallyInput {
 					//add support here for tally3 and tally4
 
 					this.setBussesForAddress(address.toString(), busses);
-					this.sendIndividualTallyData(address.toString(), busses);
+					//this.sendIndividualTallyData(address.toString(), busses);
+					this.sendTallyData();
 				}
             });
 
@@ -183,6 +183,8 @@ class TSL5Base extends TallyInput {
 
             tallyobj.TEXT = jspack.Unpack( "s".repeat(LENGTH), data, cursor)
 
+			this.renameAddress(tallyobj.INDEX[0].toString(), tallyobj.INDEX[0].toString(), tallyobj.TEXT.toString().trim()); 
+
             let inPreview = 0;
             let inProgram = 0;
             
@@ -212,9 +214,8 @@ class TSL5Base extends TallyInput {
             if (inProgram) {
                 busses.push("program");
             }
-            this.setBussesForAddress(tallyobj.INDEX[0], busses);
-            
-            this.sendTallyData();
+            this.setBussesForAddress(tallyobj.INDEX[0].toString(), busses);
+            this.sendIndividualTallyData(tallyobj.INDEX[0].toString(), busses);
         }
     }
 }
