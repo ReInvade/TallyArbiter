@@ -42,9 +42,11 @@ export class SocketService {
   public vmixClients: VmixClient[] = [];
   public sources: Source[] = [];
   public busOptions: BusOption[] = [];
+  public busOptionsVisible: BusOption[] = [];
   public remoteErrorOpt: boolean = true;
   public initialDataLoaded = false;
   public version?: string;
+  public uiVersion?: string;
   public externalAddress?: string;
   public interfaces: any[] = [];
   public logs: LogItem[] = [];
@@ -155,6 +157,9 @@ export class SocketService {
     this.socket.on("version", (version: string) => {
       this.version = version;
     });
+	this.socket.on('uiVersion', (uiVersion: string) => {
+		this.uiVersion = uiVersion;
+	});
 
     this.socket.on("externalAddress", (externalAddress: string) => {
         this.externalAddress = externalAddress;
@@ -184,9 +189,20 @@ export class SocketService {
       if (this.tallyData.length > 1000) {
         this.tallyData.shift();
       }
+
+	  let deviceSource = this.deviceSources.find((ds) => ds.id === address);
+	  let deviceId = deviceSource?.deviceId || undefined;
+	  let deviceName = '';
+	  if (deviceId) {
+		let deviceObj = this.devices.find((d) => d.id === deviceId);
+		if (deviceObj) {
+			deviceName = deviceObj.name;
+		}
+	  }
+
       this.tallyData.push({
         datetime: Date.now().toString(),
-        log: `Source: ${this.getSourceById(sourceId)?.name}  Address: ${address} ${busses.length === 0 ? "No busses" : `Bus${busses.length > 1 ? "ses" : ""}: ${busses.map((b) => `${b[0].toUpperCase()}${b.slice(1)}`)}`}`,
+        log: `${this.getSourceById(sourceId)?.name}  ${deviceName} ${busses.length === 0 ? "None" : `Bus${busses.length > 1 ? "ses" : ""}: ${busses.map((b) => `${b[0].toUpperCase()}${b.slice(1)}`)}`}`,
         type: 'info',
       });
       this.scrollTallyDataSubject.next();
@@ -220,6 +236,7 @@ export class SocketService {
       this.outputTypes = outputTypes;
       this.outputTypeDataFields = outputTypesDataFields;
       this.busOptions = busOptions;
+	  this.busOptionsVisible = busOptions.filter((b) => b.visible == true || b.visible == undefined);
       this.sources =  this.prepareSources(sourcesData);
       this.devices = devicesData;
       this.deviceSources = deviceSources;
@@ -346,6 +363,7 @@ export class SocketService {
     this.socket.emit('get_error_reports');
 
     this.socket.emit('version');
+	this.socket.emit('uiVersion');
     this.socket.emit('externalAddress');
     this.socket.emit('interfaces');
     this.socket.emit('get_error_reports');

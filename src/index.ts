@@ -67,6 +67,7 @@ import { Config } from './_models/Config';
 import { bonjour } from './_helpers/mdns';
 
 const version = findPackageJson(__dirname).next()?.value?.version || "unknown";
+const uiVersion = findPackageJson(path.join(__dirname, '..', 'ui')).next()?.value?.version || "unknown";
 const devmode = process.argv.includes('--dev') || process.env.NODE_ENV === 'development';
 
 if(devmode) logger('TallyArbiter running in Development Mode.', 'info');
@@ -108,9 +109,9 @@ const app = express();
 const httpServer = new http.Server(app);
 
 const io = new socketio.Server(httpServer, { allowEIO3: true });
-const socketupdates_Settings: string[]  = ['sources', 'devices', 'device_sources', 'device_states', 'listener_clients', 'tsl_clients', 'cloud_destinations', 'cloud_keys', 'cloud_clients', 'PortsInUse', 'networkDiscovery', 'vmix_clients', "addresses"];
-const socketupdates_Producer: string[]  = ['sources', 'devices', 'device_sources', 'device_states', 'listener_clients'];
-const socketupdates_Companion: string[] = ['sources', 'devices', 'device_sources', 'device_states', 'listener_clients', 'tsl_clients', 'cloud_destinations'];
+const socketupdates_Settings: string[]  = ['sources', 'devices', 'device_sources', 'device_states', 'listener_clients', 'tsl_clients', 'cloud_destinations', 'bus_options', 'cloud_keys', 'cloud_clients', 'PortsInUse', 'networkDiscovery', 'vmix_clients', "addresses"];
+const socketupdates_Producer: string[]  = ['sources', 'devices', 'device_sources', 'device_states', 'listener_clients', 'bus_options'];
+const socketupdates_Companion: string[] = ['sources', 'devices', 'device_sources', 'device_states', 'listener_clients', 'tsl_clients', 'cloud_destinations', 'bus_options'];
 
 var listener_clients = []; //array of connected listener clients (web, python, relay, etc.)
 let vMixEmulator: VMixEmulator;
@@ -283,6 +284,10 @@ function initialSetup() {
 
 		socket.on('version', () =>  {
 			socket.emit('version', version);
+		});
+
+		socket.on('uiVersion', () =>  {
+			socket.emit('uiVersion', uiVersion);
 		});
 
 		socket.on('externalAddress', () => {
@@ -982,17 +987,54 @@ function TSLClients_UpdateAll() {
 }
 
 function getDeviceStates(deviceId?: string): DeviceState[] {
-	return devices.filter((d) => deviceId ? d.id == deviceId : true).flatMap((d) => currentConfig.bus_options.map((b) => {
+	let deviceStateObj = devices.filter((d) => deviceId ? d.id == deviceId : true).flatMap((d) => currentConfig.bus_options.map((b) => {
 		const deviceSources = device_sources.filter((s) => s.deviceId == d.id);
-		return {
-			busId: b.id,
-			deviceId: d.id,
-			sources: deviceSources.filter(
-				(s) => Object.entries(SourceClients[s.sourceId]?.tally?.value || [])
-				.filter(([address, busses]) => address == s.address)
-					.findIndex(([address, busses]: [string, string[]]) => busses.includes(b.type)) !== -1).map((s) => s.id),
-		}
+
+		// Check if buss is linked, if linked all sources must be in this bus
+		const device = GetDeviceByDeviceId(d.id);
+		if ((device.linkedBusses || []).includes(b.id)) {
+
+			// Check if all sources are in the buss, if not return [] for sources. 
+			// Count number of sources in bus
+			// TODO: Check if this can be replaced with deviceSources.findIndex((s) and refactored to reduce duplicated code.
+			let num = 0;
+			for (let i = 0; i < deviceSources.length; i++) {
+				if (currentSourceTallyData?.[deviceSources[i].sourceId]?.includes(b.id)) {
+					num++
+				}
+			}
+			if (num === deviceSources.length) {
+				return {
+					busId: b.id,
+					deviceId: d.id,
+					sources: deviceSources.filter(
+						(s) => Object.entries(SourceClients[s.sourceId]?.tally?.value || [])
+						.filter(([address, busses]) => address == s.address)
+							.findIndex(([address, busses]: [string, string[]]) => busses.includes(b.id)) !== -1).map((s) => s.id),
+				}	
+			} else {
+				return {
+					busId: b.id,
+					deviceId: d.id,
+					sources: [],
+				}		
+			}
+		} else {
+			return {
+				busId: b.id,
+				deviceId: d.id,
+				sources: deviceSources.filter(
+					(s) => Object.entries(SourceClients[s.sourceId]?.tally?.value || [])
+					.filter(([address, busses]) => address == s.address)
+						.findIndex(([address, busses]: [string, string[]]) => busses.includes(b.id)) !== -1).map((s) => s.id),
+			}
+		}	
 	}));
+
+	//console.log('*** device state obj ***')
+	//console.log(deviceStateObj)
+
+	return deviceStateObj;
 }
 
 function getSourceTypeDataFields(): SourceTypeDataFields[] {
@@ -1127,15 +1169,29 @@ function UpdateDeviceState(deviceId: string) {
 	const previousBusses = [...currentDeviceTallyData[device.id] || []];
 	currentDeviceTallyData[device.id] = [];
 
-	const deviceSources = device_sources.filter((d) => d.deviceId == deviceId);
+	//console.log('previousBusses', previousBusses);
+
+	const deviceSources = device_sources.filter((d) => d.deviceId == deviceId); //only get deviceSources for this deviceId
+
 	for (const bus of currentConfig.bus_options) {
+		//console.log('bus', bus.label);
 		if ((device.linkedBusses || []).includes(bus.id)) {
-			// bus is linked, which means all sources must be in this bus
-			if (deviceSources.findIndex((s) => !currentSourceTallyData?.[s.id]?.includes(bus.type)) === -1) {
+			// bus is linked, which means all sources related to the device must be in this bus		
+
+			// Count number of sources in bus
+			// TODO: This should be replaced with deviceSources.findIndex((s).
+			let num = 0;
+			for (let i = 0; i < deviceSources.length; i++) {
+				if (currentSourceTallyData?.[deviceSources[i].sourceId]?.includes(bus.id)) { //if the current tally data includes this bus
+					num++
+				}
+			}
+
+			if (num === deviceSources.length) { //
 				currentDeviceTallyData[device.id].push(bus.id);
 				if (!previousBusses.includes(bus.id)) {
 					RunAction(deviceId, bus.id, true);
-				}
+				}	
 			} else {
 				if (previousBusses.includes(bus.id)) {
 					RunAction(deviceId, bus.id, false);
@@ -1143,7 +1199,25 @@ function UpdateDeviceState(deviceId: string) {
 			}
 		} else {
 			// bus is unlinked
-			if (deviceSources.findIndex((s) => currentSourceTallyData?.[s.id]?.includes(bus.type)) !== -1) {
+			for (let i = 0; i < deviceSources.length; i++) {
+				let deviceSource = deviceSources[i];
+				let currentSourceTally = currentSourceTallyData?.[deviceSource.sourceId] || [];
+				//console.log('currentSourceTallyData', currentSourceTallyData);
+				//console.log('currentSourceTally', currentSourceTally);
+				if (currentSourceTallyData?.[deviceSource.sourceId]?.includes(bus.id)) { //if the current source tally data includes this bus
+					//console.log('pushing', bus.label);
+					currentDeviceTallyData[device.id].push(bus.id);
+					if (!previousBusses.includes(bus.id)) {
+						RunAction(deviceId, bus.id, true);
+					}
+				} else {
+					if (previousBusses.includes(bus.id)) {
+						RunAction(deviceId, bus.id, false);
+					}
+				}
+			}
+			/*if (deviceSources.findIndex((s) => currentSourceTallyData?.[s.sourceId]?.includes(bus.id)) !== -1) { //if the current source tally data includes this bus
+				console.log('pushing', bus.label);
 				currentDeviceTallyData[device.id].push(bus.id);
 				if (!previousBusses.includes(bus.id)) {
 					RunAction(deviceId, bus.id, true);
@@ -1152,9 +1226,12 @@ function UpdateDeviceState(deviceId: string) {
 				if (previousBusses.includes(bus.id)) {
 					RunAction(deviceId, bus.id, false);
 				}
-			}
+			}*/
 		}
 	}
+
+	//console.log('currentDeviceTallyData2', currentDeviceTallyData);
+
 	UpdateSockets("device_states");
 	UpdateListenerClients(deviceId);
 	vMixEmulator?.updateListenerClients(currentDeviceTallyData);
@@ -1206,7 +1283,7 @@ function loadConfig() { // loads the JSON data from the config file to memory
 
 		device_actions = currentConfig.device_actions;
 		logger('Tally Arbiter Device Actions loaded.', 'info');
-		logger(`${device_actions.length} Device Sources configured.`, 'info');
+		logger(`${device_actions.length} Device Actions configured.`, 'info');
 
 		if (currentConfig.tsl_clients_1secupdate) {
 			currentConfig.tsl_clients_1secupdate = true;
@@ -1275,12 +1352,17 @@ function initializeSource(source: Source): TallyInput {
 	});
 	sourceClient.tally.subscribe((tallyDataWithAddresses: AddressTallyData) => {
 		const tallyData: SourceTallyData = {};
+		//console.log('tallyDataWithAddresses', tallyDataWithAddresses);
+		//console.log('device sources', device_sources);
 		for (const [sourceAddress, busses] of Object.entries(tallyDataWithAddresses)) {
-			let device_source = device_sources.find((s) => s.sourceId == source.id && s.address == sourceAddress);
+			let device_source = device_sources.find((ds) => ds.sourceId == source.id && ds.address == sourceAddress);
+			//console.log('device_source', device_source);
+			//console.log('busses', busses);
 			if(device_source) {
-				tallyData[device_source.id] = busses;
+				tallyData[device_source.sourceId] = busses;
 			}
 		}
+		//console.log('tallyData', tallyData);
 		SendCloudSourceTallyData(source.id, tallyData);
 		processSourceTallyData(source.id, tallyData);
 	});
@@ -1291,6 +1373,9 @@ function initializeSource(source: Source): TallyInput {
 		});
 	});
 	sourceClient.on("renameAddress", (address: string, newAddress: string) => {
+		//only do if they are different
+		if (address === newAddress) return;
+		
 		for (const deviceSource of device_sources.filter((d) => d.rename && d.sourceId == source.id && d.address == address)) {
 			deviceSource.address = newAddress;
 		}
@@ -1306,13 +1391,14 @@ function processSourceTallyData(sourceId: string, tallyData: SourceTallyData)
 	writeTallyDataFile(tallyData);
 
 	for (const [address, busses] of Object.entries(tallyData)) {
+		//console.log('tally_data', sourceId, address, busses);
 		io.to('settings').emit('tally_data', sourceId, address, busses);
 	}
-	
+
 	currentSourceTallyData = {
 		...currentSourceTallyData,
 		...tallyData,
-	};
+	}; 
 
 	for (const device of devices) {
 		UpdateDeviceState(device.id);
@@ -1845,13 +1931,13 @@ function TallyArbiter_Edit_Device_Source(obj: Manage): ManageResponse {
 			device_sources[i].sourceId = deviceSourceObj.sourceId;
 			oldAddress = device_sources[i].address;
 			device_sources[i].address = deviceSourceObj.address;
+			if (deviceSourceObj.bus) {
+				device_sources[i].bus = deviceSourceObj.bus;
+			}
+			device_sources[i].rename = deviceSourceObj.rename;
+			device_sources[i].reconnect_interval = deviceSourceObj.reconnect_interval;
+			device_sources[i].max_reconnects = deviceSourceObj.max_reconnects;
 		}
-		if (device_sources[i].bus) {
-			device_sources[i].bus = deviceSourceObj.bus;
-		}
-		device_sources[i].rename = deviceSourceObj.rename;
-		device_sources[i].reconnect_interval = deviceSourceObj.reconnect_interval;
-		device_sources[i].max_reconnects = deviceSourceObj.max_reconnects;
 	}
 
 	let deviceName = ''
@@ -2044,6 +2130,7 @@ function TallyArbiter_Edit_Bus_Option(obj: Manage): ManageResponse {
 			currentConfig.bus_options[i].label = busOptionObj.label;
 			currentConfig.bus_options[i].type = busOptionObj.type;
 			currentConfig.bus_options[i].color = busOptionObj.color;
+			currentConfig.bus_options[i].visible = busOptionObj.visible;
 			break;
 		}
 	}

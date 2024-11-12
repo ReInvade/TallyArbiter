@@ -13,7 +13,7 @@ export class TSLListenerProvider extends ListenerProvider {
 
     public start() {
         logger('Starting TSL Listener Service.', 'info-quiet');
-        logger(`Initiating ${currentConfig.tsl_clients.length} TSL Client Connections.`, 'info');
+        logger(`Initiating ${currentConfig.tsl_clients.length} TSL Client Connection${this.tsl_clients.length >1 ? 's' : ''}.`, 'info');
         for (const tslClient of currentConfig.tsl_clients) {
             logger(`TSL Client: ${tslClient.ip}:${tslClient.port} (${tslClient.transport})`, 'info-quiet');
             this.startTSLClientConnection(tslClient);
@@ -164,7 +164,9 @@ export class TSLListenerProvider extends ListenerProvider {
             }
             bufUMD[1] = bufTally;
 
-			logger(`Sending TSL data for ${device.name} to ${this.tsl_clients.length} clients.`, 'info');
+			if (this.tsl_clients.length > 0) {
+				logger(`Sending TSL data for ${device.name} to ${this.tsl_clients.length} client${this.tsl_clients.length >1 ? 's' : ''}.`, 'info-quiet');
+			}
 
             for (const tslClient of this.tsl_clients.filter((t) => t.connected)) {
                 //logger(`Sending TSL data for ${device.name} to ${tslClient.ip}:${tslClient.port}`, 'info');
